@@ -78,7 +78,7 @@ int read_n(char *fileName) {
     return n;
 }
 
-void setInitialConfiguration(int n, char configuration[n][n], char *configurationFile) {
+void setInitialConfiguration(int n, char ***configuration, char *configurationFile) {
 
     FILE *fp = openFile(configurationFile);
     char ignore[32];
@@ -87,19 +87,30 @@ void setInitialConfiguration(int n, char configuration[n][n], char *configuratio
         exit(EXIT_FAILURE);
     }
 
+    char **temp = calloc((unsigned long)n , sizeof(char *));
+    for(int i = 0; i < n; i++)
+        temp[i] = calloc((unsigned long)n , sizeof(char));
+
+    if (!temp) {
+        fprintf(stderr, "NULL POINTER AT ALLOC:%d.\n", __LINE__);
+        exit(EXIT_FAILURE);
+    }
+
     int rowCounter = 0;
     while (rowCounter < n) {
-        if (fgets(configuration[rowCounter], n + 2, fp) == NULL) {
+        if (fgets(temp[rowCounter], n + 2, fp) == NULL) {
             fprintf(stderr, "Bad fgets() @ line:%d.\n", __LINE__);
             fprintf(stderr, "Config file should be %d lines long, %d were read .", n, rowCounter);
             exit(EXIT_FAILURE);
         }
         rowCounter++;
     }
+    free(*configuration);
+    *configuration = temp;
     fclose(fp);
 }
 
-void stepConfigurationOnce(int n, int ePP, char currentBuffer[n][ePP], char aggregateBuffer[n+2][ePP+2], const char transformationFunction[512]) {
+void stepConfigurationOnce(int n, int ePP, char **currentBuffer, char **aggregateBuffer, const char transformationFunction[512]) {
 
     int aggX = n+2;
     int aggY = ePP+2;
@@ -117,7 +128,7 @@ void stepConfigurationOnce(int n, int ePP, char currentBuffer[n][ePP], char aggr
     }
 }
 
-void drawConfiguration(int n, char configuration[n][n]) {
+void drawConfiguration(int n, char **configuration) {
 
     for (int x = 0; x < n; ++x) {
         if ( x != 0 )
@@ -130,7 +141,7 @@ void drawConfiguration(int n, char configuration[n][n]) {
     printf("\033[1;1H"); // Set the cursor to 1:1 position
 }
 
-void mergeAggregate(int n, int ePP, const char localBuffer[n][ePP], const char left[n], const char right[n], char aggregate[n+2][ePP+2]){
+void mergeAggregate(int n, int ePP, char **localBuffer, const char *left, const char *right, char **aggregate){
 
     int aggX = n+2;
     int aggY = ePP+2;
@@ -152,13 +163,21 @@ void mergeAggregate(int n, int ePP, const char localBuffer[n][ePP], const char l
     }
 }
 
-void compute(int n, int t, int ePP, char rootConfiguration[n][n], int myRank, int commSize, const char *transformationFunction) {
+void compute(int n, int t, int ePP, char **rootConfiguration, int myRank, int commSize, const char *transformationFunction) {
 
     char sendLeft[n], sendRight[n];
     char recvLeft[n], recvRight[n];
 
-    char currentBuffer[n][ePP];
-    char aggregateBuffer[n+2][ePP+2];
+    MPI_Request req;
+
+    char **currentBuffer = malloc((unsigned long) n * sizeof(char *));
+    for (int i = 0; i < n; ++i) {
+        currentBuffer[i] = malloc((unsigned long) n * sizeof(char));
+    }
+
+    char **aggregateBuffer = malloc((unsigned long) (n+2) * sizeof(char *));
+    for (int i = 0; i < n+2; ++i)
+        aggregateBuffer[i] = malloc((unsigned long) (ePP+2) * sizeof(char));
 
     for (int k = 0; k < n; ++k)
         MPI_Scatter(rootConfiguration[k], ePP, MPI_CHAR, currentBuffer[k], ePP, MPI_CHAR, 0, MPI_COMM_WORLD);
@@ -176,9 +195,8 @@ void compute(int n, int t, int ePP, char rootConfiguration[n][n], int myRank, in
         for (int ri = 0; ri < n; ++ri)
             sendRight[ri] = currentBuffer[ri][ePP-1];
 
-        // TODO when only 1 processor make sure it talks to itself without hanging.
-        MPI_Send(&sendLeft, n, MPI_CHAR, mod(myRank - 1, commSize), 1, MPI_COMM_WORLD);
-        MPI_Send(&sendRight, n, MPI_CHAR, mod(myRank + 1, commSize), 2, MPI_COMM_WORLD);
+        MPI_Isend(&sendLeft, n, MPI_CHAR, mod(myRank - 1, commSize), 1, MPI_COMM_WORLD, &req);
+        MPI_Isend(&sendRight, n, MPI_CHAR, mod(myRank + 1, commSize), 2, MPI_COMM_WORLD, &req);
 
         MPI_Recv(&recvRight, n, MPI_CHAR, mod((myRank + 1), commSize), 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Recv(&recvLeft, n, MPI_CHAR, mod((myRank - 1), commSize), 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -192,24 +210,19 @@ void compute(int n, int t, int ePP, char rootConfiguration[n][n], int myRank, in
 //        usleep(100000);
     }
 
-    for (int k = 0; k < n; ++k)
-        MPI_Gather(currentBuffer[k], ePP, MPI_CHAR, rootConfiguration[k], ePP, MPI_CHAR, 0, MPI_COMM_WORLD);
+//    for (int k = 0; k < n; ++k)
+//        MPI_Gather(currentBuffer[k], ePP, MPI_CHAR, rootConfiguration[k], ePP, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+    for (int l = 0; l < n + 2; ++l)
+        free(aggregateBuffer[l]);
+    free(aggregateBuffer);
+
+    for (int j = 0; j < n; ++j)
+        free(currentBuffer[j]);
+    free(currentBuffer);
 }
 
 int main(int argc, char **argv) {
-
-
-    checkInput(argc);
-
-    char *functionFile = argv[1];
-    char *configurationFile = argv[2];
-    int t = (int) strtol(argv[3], NULL, 10);
-    int n = read_n(configurationFile);
-
-    char transformationFunction[512];
-    setFunctionRange(functionFile, transformationFunction);
-
-    char rootConfiguration[n][n];
 
     MPI_Init(&argc, &argv);
     int myRank;
@@ -217,10 +230,21 @@ int main(int argc, char **argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
     MPI_Comm_size(MPI_COMM_WORLD, &commSize);
 
+    char *functionFile = argv[1];
+    char *configurationFile = argv[2];
+    int t = (int) strtol(argv[3], NULL, 10);
+    int n = read_n(configurationFile);
+    char transformationFunction[512];
+    setFunctionRange(functionFile, transformationFunction);
+    char **rootConfiguration = NULL;
     int ePP = n / commSize; // elementsPerProcess
 
-    if (myRank == 0)
-        setInitialConfiguration(n, rootConfiguration, configurationFile);
+    if ( myRank == 0 ) {
+        checkInput(argc);
+        setInitialConfiguration(n, &rootConfiguration, configurationFile);
+    } else {
+        rootConfiguration = malloc(sizeof(char *));
+    }
 
 //    MPI_Barrier(MPI_COMM_WORLD); /* IMPORTANT */
 //    double start = MPI_Wtime();
@@ -229,6 +253,13 @@ int main(int argc, char **argv) {
 
 //    MPI_Barrier(MPI_COMM_WORLD); /* IMPORTANT */
 //    double end = MPI_Wtime();
+
+
+    if ( myRank == 0 )
+        for (int j = 0; j < n; ++j)
+            free(rootConfiguration[j]);
+
+    free(rootConfiguration);
 
     MPI_Finalize();
 
