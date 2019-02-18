@@ -210,8 +210,8 @@ void compute(int n, int t, int ePP, char **rootConfiguration, int myRank, int co
 //        usleep(100000);
     }
 
-//    for (int k = 0; k < n; ++k)
-//        MPI_Gather(currentBuffer[k], ePP, MPI_CHAR, rootConfiguration[k], ePP, MPI_CHAR, 0, MPI_COMM_WORLD);
+    for (int k = 0; k < n; ++k)
+        MPI_Gather(currentBuffer[k], ePP, MPI_CHAR, rootConfiguration[k], ePP, MPI_CHAR, 0, MPI_COMM_WORLD);
 
     for (int l = 0; l < n + 2; ++l)
         free(aggregateBuffer[l]);
