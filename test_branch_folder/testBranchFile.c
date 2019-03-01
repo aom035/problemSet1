@@ -8,5 +8,7 @@
 int main(void) {
 
     printf("%s\n","LMAO");
+    printf("%s\n","LMAO");
+    printf("%s\n","LMAO");
 
 }
